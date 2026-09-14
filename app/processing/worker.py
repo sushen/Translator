@@ -9,6 +9,7 @@ from app.pdf.page_parser import PageParser
 from app.pdf.pdf_builder import PDFBuilder
 from app.ocr.ocr_engine import TesseractOCREngine
 from app.translation.openai_translator import OpenAITranslator, MockTranslator
+from app.translation.google_translator import GoogleTranslator
 from app.translation.translation_cache import TranslationCache
 from app.translation.translation_validator import TranslationValidator
 from app.processing.pipeline import JobManager, JobState
@@ -26,8 +27,12 @@ class TranslationWorker(QThread):
     def __init__(
         self,
         input_path: Path,
+        provider: str = "openai",
         model_name: str = "gpt-4o-mini",
         api_key: str = "",
+        google_project_id: str = "",
+        google_credentials_path: str = "",
+        local_device: str = "auto",
         font_name: str = "Noto Sans Bengali",
         page_limit: int = 0,
         preserve_headings: bool = True,
@@ -41,8 +46,12 @@ class TranslationWorker(QThread):
     ):
         super().__init__(parent)
         self.input_path = input_path
+        self.provider = provider.lower() if provider else "openai"
         self.model_name = model_name
         self.api_key = api_key
+        self.google_project_id = google_project_id
+        self.google_credentials_path = google_credentials_path
+        self.local_device = local_device
         self.font_name = font_name
         self.page_limit = page_limit
         self.preserve_headings = preserve_headings
@@ -123,15 +132,30 @@ class TranslationWorker(QThread):
             translatable_paras = doc_model.get_translatable_paragraphs()
             total_chunks = len(translatable_paras)
 
-            if self.model_name == "mock-translator":
+            if self.provider in ("google", "google cloud translation") or self.model_name == "google-cloud-translate":
+                translator = GoogleTranslator(
+                    project_id=self.google_project_id,
+                    credentials_path=self.google_credentials_path
+                )
+                cache_model_name = "google-cloud-translate"
+            elif self.provider in ("local", "local ai translator") or "nllb" in self.model_name.lower():
+                from app.translation.local_translator import LocalTranslator
+                from app.translation.model_manager import ModelManager
+                repo_name = self.model_name if "nllb" in self.model_name.lower() else settings.local_model
+                mm = ModelManager(model_repo=repo_name)
+                translator = LocalTranslator(model_manager=mm, preferred_device=self.local_device)
+                cache_model_name = f"local-{mm.model_folder_name}"
+            elif self.provider in ("mock", "mock-translator") or self.model_name == "mock-translator":
                 translator = MockTranslator()
+                cache_model_name = "mock-translator"
             else:
                 translator = OpenAITranslator(api_key=self.api_key, model=self.model_name)
+                cache_model_name = self.model_name
 
             cache = TranslationCache()
 
-            # Generate unique hash for file resume
-            file_hash = hashlib.sha256(self.input_path.read_bytes()[:10000]).hexdigest()
+            # Include provider in unique hash for file resume to prevent state collisions between providers
+            file_hash = hashlib.sha256(f"{self.input_path.read_bytes()[:10000]}|{cache_model_name}".encode('utf-8')).hexdigest()
             job_id = f"job_{file_hash[:12]}"
             job_manager = JobManager()
 
@@ -172,7 +196,7 @@ class TranslationWorker(QThread):
                         cached_count += 1
                     else:
                         # Check SQLite cache
-                        cached_text = cache.get(p.text, model_name=self.model_name)
+                        cached_text = cache.get(p.text, model_name=cache_model_name)
                         if cached_text:
                             p.translated_text = cached_text
                             p.status = "translated"
@@ -190,7 +214,7 @@ class TranslationWorker(QThread):
                                 p.translated_text = res_text
                                 p.status = "translated"
                                 translated_map[p.id] = res_text
-                                cache.put(p.text, res_text, model_name=self.model_name)
+                                cache.put(p.text, res_text, model_name=cache_model_name)
                                 api_count += 1
                             else:
                                 p.status = "failed"

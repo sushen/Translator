@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QThread, Signal, Slot
 
 from app.config.settings import settings
 from app.fonts.font_manager import FontManager
+from app.translation.model_manager import ModelManager
 from app.utils.paths import get_output_dir
 from app.utils.logging import get_logger
 from app.gui.styles.theme import STYLE_SHEET
@@ -17,6 +18,25 @@ from app.gui.widgets.preview_widget import SideBySidePreviewWidget
 from app.gui.dialogs.report_dialog import ReportDialog
 
 logger = get_logger(__name__)
+
+class ModelDownloadWorker(QThread):
+    progress_updated = Signal(int, str)
+    download_finished = Signal(bool, str)
+
+    def __init__(self, model_manager: ModelManager, parent=None):
+        super().__init__(parent)
+        self.model_manager = model_manager
+
+    def run(self):
+        try:
+            def cb(pct, msg):
+                self.progress_updated.emit(pct, msg)
+
+            self.model_manager.download_model(progress_callback=cb)
+            self.download_finished.emit(True, "Model downloaded and verified successfully!")
+        except Exception as e:
+            logger.error(f"Model download error: {e}")
+            self.download_finished.emit(False, str(e))
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -28,6 +48,8 @@ class MainWindow(QMainWindow):
         self.input_pdf_path: Path = None
         self.analyzed_doc = None
         self.worker_thread: QThread = None
+        self.model_manager = ModelManager(model_repo=settings.local_model)
+        self.download_worker: QThread = None
 
         self._init_ui()
 
@@ -84,16 +106,91 @@ class MainWindow(QMainWindow):
         lang_layout.addRow("Source Language:", self.src_lang_lbl)
         lang_layout.addRow("Target Language:", self.tgt_lang_lbl)
 
+        # Provider Selector
+        self.provider_combo = QComboBox()
+        self.provider_combo.addItems(["OpenAI", "Local AI Translator", "Google Cloud Translation", "Mock Translator"])
+        lang_layout.addRow("Translation Provider:", self.provider_combo)
+
+        # OpenAI Container Widget
+        self.openai_container = QWidget()
+        openai_layout = QFormLayout(self.openai_container)
+        openai_layout.setContentsMargins(0, 0, 0, 0)
+
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["gpt-4o-mini", "gpt-4o", "mock-translator"])
-        self.model_combo.setCurrentText(settings.openai_model)
-        lang_layout.addRow("Translation Model:", self.model_combo)
+        self.model_combo.addItems(["gpt-4o-mini", "gpt-4o"])
+        self.model_combo.setCurrentText(settings.openai_model if settings.openai_model in ["gpt-4o-mini", "gpt-4o"] else "gpt-4o-mini")
+        openai_layout.addRow("Translation Model:", self.model_combo)
 
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
         self.api_key_edit.setPlaceholderText("Loaded from .env if left empty")
         self.api_key_edit.setText(settings.openai_api_key)
-        lang_layout.addRow("API Key:", self.api_key_edit)
+        openai_layout.addRow("API Key:", self.api_key_edit)
+
+        lang_layout.addRow(self.openai_container)
+
+        # Local AI Translator Container Widget
+        self.local_container = QWidget()
+        local_layout = QFormLayout(self.local_container)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.local_model_lbl = QLabel("Meta NLLB-200 (distilled-600M)")
+        local_layout.addRow("Local Model:", self.local_model_lbl)
+
+        self.local_device_combo = QComboBox()
+        self.local_device_combo.addItems(["auto", "cpu", "cuda"])
+        self.local_device_combo.setCurrentText(settings.local_device)
+        local_layout.addRow("Hardware Device:", self.local_device_combo)
+
+        self.local_status_lbl = QLabel("Checking status...")
+        local_layout.addRow("Status:", self.local_status_lbl)
+
+        self.download_model_btn = QPushButton("Download Model")
+        self.download_model_btn.clicked.connect(self._on_download_model)
+        local_layout.addRow("Model Management:", self.download_model_btn)
+
+        lang_layout.addRow(self.local_container)
+
+        # Google Cloud Translation Container Widget
+        self.google_container = QWidget()
+        google_layout = QFormLayout(self.google_container)
+        google_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.google_project_edit = QLineEdit()
+        self.google_project_edit.setPlaceholderText("Optional if in credentials JSON")
+        self.google_project_edit.setText(settings.google_project_id)
+        google_layout.addRow("Google Project ID:", self.google_project_edit)
+
+        google_cred_picker_layout = QHBoxLayout()
+        self.google_cred_edit = QLineEdit()
+        self.google_cred_edit.setPlaceholderText("Path to service account JSON file")
+        self.google_cred_edit.setText(settings.google_credentials_path)
+        self.google_cred_browse_btn = QPushButton("Browse...")
+        self.google_cred_browse_btn.clicked.connect(self._on_browse_google_cred)
+        google_cred_picker_layout.addWidget(self.google_cred_edit)
+        google_cred_picker_layout.addWidget(self.google_cred_browse_btn)
+
+        google_layout.addRow("Google Credentials:", google_cred_picker_layout)
+
+        self.test_conn_btn = QPushButton("Test Google Connection")
+        self.test_conn_btn.clicked.connect(self._on_test_google_connection)
+        google_layout.addRow("Connection Test:", self.test_conn_btn)
+
+        lang_layout.addRow(self.google_container)
+
+        # Connect Provider Change Signal
+        self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
+
+        # Set initial provider selection
+        if settings.translation_provider.lower() in ["google", "google cloud translation"]:
+            self.provider_combo.setCurrentText("Google Cloud Translation")
+        elif settings.translation_provider.lower() in ["local", "local ai translator"]:
+            self.provider_combo.setCurrentText("Local AI Translator")
+        elif settings.translation_provider.lower() in ["mock", "mock-translator"]:
+            self.provider_combo.setCurrentText("Mock Translator")
+        else:
+            self.provider_combo.setCurrentText("OpenAI")
+        self._on_provider_changed(self.provider_combo.currentText())
 
         self.font_combo = QComboBox()
         available_fonts = FontManager.get_instance().list_available_fonts()
@@ -190,6 +287,86 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.tabs)
 
+    def _on_provider_changed(self, provider_text: str):
+        if provider_text == "OpenAI":
+            self.openai_container.setVisible(True)
+            self.local_container.setVisible(False)
+            self.google_container.setVisible(False)
+        elif provider_text == "Local AI Translator":
+            self.openai_container.setVisible(False)
+            self.local_container.setVisible(True)
+            self.google_container.setVisible(False)
+            self._update_local_status()
+        elif provider_text == "Google Cloud Translation":
+            self.openai_container.setVisible(False)
+            self.local_container.setVisible(False)
+            self.google_container.setVisible(True)
+        else: # Mock Translator
+            self.openai_container.setVisible(False)
+            self.local_container.setVisible(False)
+            self.google_container.setVisible(False)
+
+    def _update_local_status(self):
+        if self.model_manager.is_model_installed():
+            size_mb = self.model_manager.get_model_size_mb()
+            self.local_status_lbl.setText(f"✓ Ready ({size_mb:.1f} MB)")
+            self.download_model_btn.setText("Re-download / Verify Model")
+        else:
+            self.local_status_lbl.setText("Status: Not Installed")
+            self.download_model_btn.setText("Download Model")
+
+    def _on_download_model(self):
+        if self.download_worker and self.download_worker.isRunning():
+            QMessageBox.information(self, "Download in Progress", "Model download is already in progress.")
+            return
+
+        self.download_model_btn.setEnabled(False)
+        self.status_lbl.setText("Downloading translation model...")
+
+        self.download_worker = ModelDownloadWorker(self.model_manager, self)
+        self.download_worker.progress_updated.connect(self._on_download_progress)
+        self.download_worker.download_finished.connect(self._on_download_finished)
+        self.download_worker.start()
+
+    def _on_download_progress(self, pct: int, msg: str):
+        self.progress_bar.setValue(pct)
+        self.status_lbl.setText(msg)
+        self.local_status_lbl.setText(f"Downloading... ({pct}%)")
+
+    def _on_download_finished(self, success: bool, msg: str):
+        self.download_model_btn.setEnabled(True)
+        self._update_local_status()
+        if success:
+            self.progress_bar.setValue(100)
+            self.status_lbl.setText("Local translation model is ready.")
+            QMessageBox.information(self, "Download Complete", msg)
+        else:
+            self.status_lbl.setText(f"Download failed: {msg}")
+            QMessageBox.critical(self, "Download Error", f"Failed to download model:\n{msg}")
+
+    def _on_browse_google_cred(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Google Service Account JSON Key",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if file_path:
+            self.google_cred_edit.setText(file_path)
+
+    def _on_test_google_connection(self):
+        project_id = self.google_project_edit.text().strip()
+        credentials_path = self.google_cred_edit.text().strip()
+
+        from app.translation.google_translator import GoogleTranslator
+        translator = GoogleTranslator(project_id=project_id, credentials_path=credentials_path)
+
+        success, msg = translator.validate_connection()
+        if success:
+            QMessageBox.information(self, "Google Connection Test", msg)
+        else:
+            QMessageBox.warning(self, "Google Connection Failed", msg)
+
     def _on_browse_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Input English PDF", "", "PDF Files (*.pdf)")
         if file_path:
@@ -244,18 +421,50 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please analyze the PDF first.")
             return
 
+        provider_text = self.provider_combo.currentText()
         api_key = self.api_key_edit.text().strip()
         model_name = self.model_combo.currentText()
+        google_proj = self.google_project_edit.text().strip()
+        google_cred = self.google_cred_edit.text().strip()
 
-        if model_name != "mock-translator" and not api_key:
-            QMessageBox.warning(self, "API Key Missing", "Please enter an OpenAI API key or select 'mock-translator' model.")
-            return
+        if provider_text == "OpenAI":
+            provider = "openai"
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Please enter an OpenAI API key.")
+                return
+        elif provider_text == "Local AI Translator":
+            provider = "local"
+            model_name = settings.local_model
+            if not self.model_manager.is_model_installed():
+                reply = QMessageBox.question(
+                    self,
+                    "Model Not Installed",
+                    "Local translation model is not installed.\n\n"
+                    "Download the model now to enable offline English → Bangla translation?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self._on_download_model()
+                return
+        elif provider_text == "Google Cloud Translation":
+            provider = "google"
+            model_name = "google-cloud-translate"
+            if google_cred and not Path(google_cred).exists():
+                QMessageBox.warning(self, "Credentials Error", f"Google credentials file not found: {google_cred}")
+                return
+        else: # Mock Translator
+            provider = "mock"
+            model_name = "mock-translator"
 
         from app.processing.worker import TranslationWorker
         self.worker = TranslationWorker(
             input_path=self.input_pdf_path,
+            provider=provider,
             model_name=model_name,
             api_key=api_key,
+            google_project_id=google_proj,
+            google_credentials_path=google_cred,
+            local_device=self.local_device_combo.currentText(),
             font_name=self.font_combo.currentText(),
             page_limit=self.page_limit_spin.value(),
             preserve_headings=self.chk_headings.isChecked(),
