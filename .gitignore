@@ -19,3 +19,5 @@ venv/
 *credentials*.json
 google_credentials.json
 *.json.key
+*.idea
+.idea/
