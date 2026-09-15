@@ -35,6 +35,7 @@ class TranslationWorker(QThread):
         google_credentials_path: str = "",
         local_device: str = "auto",
         font_name: str = "Noto Sans Bengali",
+        selected_pages: Optional[list] = None,
         page_limit: int = 0,
         preserve_headings: bool = True,
         preserve_paragraphs: bool = True,
@@ -54,6 +55,7 @@ class TranslationWorker(QThread):
         self.google_credentials_path = google_credentials_path
         self.local_device = local_device
         self.font_name = font_name
+        self.selected_pages = selected_pages
         self.page_limit = page_limit
         self.preserve_headings = preserve_headings
         self.preserve_paragraphs = preserve_paragraphs
@@ -82,7 +84,11 @@ class TranslationWorker(QThread):
             extractor = TextExtractor(extract_images=self.preserve_images)
             doc_model = extractor.extract_document(self.input_path)
 
-            if self.page_limit > 0:
+            if self.selected_pages is not None:
+                selected_set = set(self.selected_pages)
+                doc_model.pages = [p for p in doc_model.pages if p.page_num in selected_set]
+                doc_model.total_pages = len(doc_model.pages)
+            elif self.page_limit > 0:
                 doc_model.pages = doc_model.pages[:self.page_limit]
                 doc_model.total_pages = len(doc_model.pages)
 
@@ -104,10 +110,9 @@ class TranslationWorker(QThread):
                 if page.needs_ocr or page.is_scanned:
                     if ocr_engine and ocr_engine.is_available():
                         try:
-                            # Render page image for OCR
                             import pymupdf
                             doc = pymupdf.open(str(self.input_path))
-                            p = doc[idx]
+                            p = doc[page.page_num - 1]
                             pix = p.get_pixmap()
                             img_bytes = pix.tobytes("png")
                             ocr_text = ocr_engine.extract_text_from_image(img_bytes, lang="eng")
@@ -115,7 +120,6 @@ class TranslationWorker(QThread):
 
                             if ocr_text.strip():
                                 page.extracted_text = ocr_text
-                                # Create synthetic text block for OCR extracted text
                                 from app.document.block_model import BlockModel
                                 page.blocks = [
                                     BlockModel(
@@ -158,19 +162,18 @@ class TranslationWorker(QThread):
 
             cache = TranslationCache()
 
-            # Include provider in unique hash for file resume to prevent state collisions between providers
             file_hash = hashlib.sha256(f"{self.input_path.read_bytes()[:10000]}|{cache_model_name}".encode('utf-8')).hexdigest()
             job_id = f"job_{file_hash[:12]}"
             job_manager = JobManager()
 
             existing_job = job_manager.load_job(job_id)
             translated_map = existing_job.translated_map if existing_job else {}
+            units_map = existing_job.units_map if existing_job else {}
 
             cached_count = 0
             api_count = 0
             failed_count = 0
 
-            # Process paragraphs in batches
             batch_size = settings.batch_size
             completed_chunks = 0
 
@@ -183,7 +186,8 @@ class TranslationWorker(QThread):
                         total_pages=total_pages,
                         completed_blocks=completed_chunks,
                         status="PAUSED",
-                        translated_map=translated_map
+                        translated_map=translated_map,
+                        units_map=units_map
                     )
                     job_manager.save_job(job)
                     self.job_failed.emit("Translation paused/cancelled. Progress saved for resume.")
@@ -193,18 +197,32 @@ class TranslationWorker(QThread):
                 untranslated_batch = []
 
                 for p in batch:
-                    # Check in-job map first
-                    if p.id in translated_map:
-                        p.translated_text = translated_map[p.id]
+                    # Restore from existing unit map if human edits or past run exists
+                    if p.id in units_map:
+                        restored_p = units_map[p.id]
+                        p.ai_translation = restored_p.get("ai_translation")
+                        p.human_translation = restored_p.get("human_translation")
+                        p.review_status = restored_p.get("review_status", "AI Translated")
+                        p.revisions = restored_p.get("revisions", [])
+                        p.comments = restored_p.get("comments", [])
+                        p.ai_recheck_status = restored_p.get("ai_recheck_status")
+                        p.ai_recheck_feedback = restored_p.get("ai_recheck_feedback")
+                        p.translated_text = p.current_translation
                         p.status = "translated"
+                        translated_map[p.id] = p.current_translation
+                        cached_count += 1
+                    elif p.id in translated_map:
+                        p.set_ai_translation(translated_map[p.id])
+                        p.status = "translated"
+                        units_map[p.id] = p.to_dict()
                         cached_count += 1
                     else:
-                        # Check SQLite cache
                         cached_text = cache.get(p.text, model_name=cache_model_name)
                         if cached_text:
-                            p.translated_text = cached_text
+                            p.set_ai_translation(cached_text)
                             p.status = "translated"
                             translated_map[p.id] = cached_text
+                            units_map[p.id] = p.to_dict()
                             cached_count += 1
                         else:
                             untranslated_batch.append(p)
@@ -215,9 +233,10 @@ class TranslationWorker(QThread):
                         for p, res_text in zip(untranslated_batch, results):
                             valid, msg = TranslationValidator.validate(p.text, res_text)
                             if valid:
-                                p.translated_text = res_text
+                                p.set_ai_translation(res_text)
                                 p.status = "translated"
-                                translated_map[p.id] = res_text
+                                translated_map[p.id] = p.current_translation
+                                units_map[p.id] = p.to_dict()
                                 cache.put(p.text, res_text, model_name=cache_model_name)
                                 api_count += 1
                             else:
@@ -251,6 +270,9 @@ class TranslationWorker(QThread):
             )
 
             # Save finished job state
+            for p in translatable_paras:
+                units_map[p.id] = p.to_dict()
+
             job = JobState(
                 job_id=job_id,
                 source_pdf_path=str(self.input_path),
@@ -261,7 +283,8 @@ class TranslationWorker(QThread):
                 completed_blocks=completed_chunks,
                 failed_blocks=failed_count,
                 status="COMPLETED",
-                translated_map=translated_map
+                translated_map=translated_map,
+                units_map=units_map
             )
             job_manager.save_job(job)
 
