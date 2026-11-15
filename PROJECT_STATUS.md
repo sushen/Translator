@@ -10,7 +10,7 @@ The original README documents installation and the PDF translation workflow.
 
 ## Current snapshot
 
-- Release preparation: `v-0.0.2` packages the current Studio/PDF improvements
+- Published GitHub source release `v-0.0.2` packages the current Studio/PDF improvements
   as source, with setup and limitations in `RELEASE_NOTES.md`. Local books,
   models, outputs and scratch files are ignored; the previously tracked cache
   and generated output samples are removed from Git's index, retained on disk.
@@ -166,7 +166,7 @@ application or a full-book translation perfect on the basis of this sample.
 
 ## Development log
 
-### 2026-11-15 — Prepare GitHub source release v-0.0.2
+### 2026-11-15 — Publish GitHub source release v-0.0.2
 
 - Prepared the accumulated application changes for the requested GitHub release;
   added release notes and excluded local books/models/outputs/scratch directories.
@@ -181,9 +181,11 @@ application or a full-book translation perfect on the basis of this sample.
   OpenAI SDK import file reads; no paid calls or model downloads were requested.
   The project environment lacks `python-docx`, so DOCX tests were not verified
   in this release session. Existing broader-suite limitations remain above.
+- Published the source release from commit `9d2ffb4` on branch `v-0.0.2`:
+  https://github.com/sushen/Translator/releases/tag/v-0.0.2
 - No manual GUI/end-to-end verification or standalone executable build was done.
-  Next step: publish and verify the GitHub release, then validate a clean install
-  and broader test suite in a fully provisioned environment.
+  Next step: validate a clean install and broader test suite in a fully
+  provisioned environment.
 
 ### 2026-11-10 — Prioritize the Bangla translator in cover design
 
