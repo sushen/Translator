@@ -1,5 +1,9 @@
 # English → Bangla PDF Translator
 
+For the current development snapshot, verification status, and handoff history,
+see [PROJECT_STATUS.md](PROJECT_STATUS.md). Contributor and agent continuity
+guidance is in [AGENTS.md](AGENTS.md).
+
 A production-quality Python PySide6 desktop application for translating English PDF documents into beautifully formatted Unicode Bangla (Bengali) PDFs with complete document structure preservation, accurate Bengali typography/script shaping, translation caching, interrupted job resume support, OCR fallback, and side-by-side preview.
 
 ---
@@ -110,6 +114,12 @@ assets/
 
 ## Environment Configuration & API Key Setup
 
+For an OpenAI-compatible third-party gateway, set `OPENAI_BASE_URL` to its API
+address (typically ending in `/v1`), `OPENAI_MODEL` to a model available through
+that gateway, and `OPENAI_API_KEY` to its key. The OpenAI settings panel also
+accepts a custom API base URL and editable model name. Gateway credentials and
+model access must be verified separately. Keep `.env` local; it is ignored by Git.
+
 Create a `.env` file in the project root directory (or copy from `.env.example`):
 ```bash
 cp .env.example .env
@@ -173,6 +183,22 @@ To use Google Cloud Translation as a real translation provider in the applicatio
 
 ## How to Launch & Use the Application
 
+Choose **File → Book locations…** (or **Book locations…** in Translation Job)
+to set the default book folder, English/reference PDF, and original-edition PDF.
+The app initially discovers a single PDF in `Book` and its existing original
+subfolder. Defaults are remembered; startup selects the reference PDF without
+automatically analyzing or translating it. Changing defaults keeps current work
+open. The original-edition path is saved for reference; automatic multilingual
+alignment and original-edition refinement are not implemented yet.
+
+On Windows, double-click **Start GUI.bat** in the project folder. It uses the
+project's `venv` and keeps startup errors visible if launching fails.
+
+Use the **Display zoom** toolbar or **View** menu to zoom from 75% to 200%.
+Shortcuts: **Ctrl++** (or **Ctrl+=**) to enlarge, **Ctrl+-** to reduce, and
+**Ctrl+0** to reset. The chosen percentage is remembered; the initial default is
+125%. Display zoom does not change Studio PDF text sizes.
+
 1. **Launch the GUI**:
    ```bash
    python3 main.py
@@ -191,6 +217,67 @@ To use Google Cloud Translation as a real translation provider in the applicatio
 ---
 
 ## Side-by-Side Preview
+
+### Translation Studio page editor
+
+To edit an existing translated PDF directly, choose **Translation Studio → Open
+translated PDF in Studio…**. Untouched imported pages retain their original PDF
+appearance in exports. The text editor contains extracted text for replacement;
+editing it rebuilds that page and can lose its original layout/images. Some PDFs
+have imperfect Unicode extraction, so check text carefully. Use **Page → Restore
+original imported PDF page** to recover its original appearance. Imported PDFs
+need manually attached source text before AI refinement; use **Page → Attach
+source text for this page…**. This does not automatically align editions.
+
+Choose **Cover / title page** for the selected page to replace it with a designed
+page. Set title, author, Bangla translator, optional separate English translator,
+editor (সম্পাদক), publication (প্রকাশনা),
+background picture, text color, font sizes, and vertical positions. The
+**অনুবাদককে প্রাধান্য দিন · Translator-first layout** preset gives the Bangla
+translator a separate large name block, with smaller supporting credits below.
+Translator and author font sizes and the supporting-credit position have
+independent controls. Existing designs keep their layout until the preset is
+selected; names, background, and opacity are retained. Apply/Cancel stay visible
+below the scrollable controls. The
+**Text panel opacity** control ranges from 0% (transparent) to 100% (solid
+white), with 5% for new designs. Existing designs retain their earlier opacity
+until changed. The text itself remains opaque. The live
+preview uses the actual PDF renderer. The background and text remain separate
+editable project layers; lettering already baked into an old cover image cannot
+be edited independently. Use a clean background or the default neutral design.
+The previous page/design is retained in revision history. Save the project to
+retain layers and reopen via **Translation Studio → Open saved Studio project…**.
+
+After translating a book (or opening its Human Review from Books), choose
+**Translation Studio → Open translated-page editor**. This separate workspace
+copies the current source-page translations without modifying the existing job.
+Select a source page, edit Bangla text, apply bold/font size, or insert a picture
+at the cursor. **Save project** stores text, embedded pictures, and page revision
+history in a local `.json` file; **Open project** restores that studio work.
+
+**Improve page with cloud AI** uses the current OpenAI/gateway or Groq settings
+and may incur API charges. It sends the original page, current editable text,
+adjacent page context, and optional editorial instructions. The proposed rewrite,
+reasons, and ambiguities appear separately. Accept or reject explicitly. Editing
+or switching pages during a request invalidates the proposal. Pages with pictures
+require manually merging proposed text to preserve the design.
+
+**Preview PDF** shows the actual export rendering. **Export new PDF** includes
+current studio edits and pictures and refuses to overwrite an existing file.
+Each source page starts separately. Longer content continues onto extra output
+pages at readable size; PDF bookmarks and footers identify the source page and
+its continuations. Studio preview lets you select every output/continuation page.
+This is a flowing rich-text editor with inline images, not a free-position layout
+designer. Studio changes stay in the studio project and its exports; they do not
+update the original translation job. Whole-book retrieval, multilingual alignment,
+and native DOCX import are not part of this editor.
+
+For normal translation export, **Keep source pages; add overflow pages** is on
+by default. It keeps source page dimensions, derives text margins and paragraph
+spacing from extraction, and flows extra text onto continuation pages without
+shrinking fonts. The following source page starts fresh. Uncheck it for the
+older continuous-reflow export. Complex columns, tables, and exact facsimile
+placement are not guaranteed by this reading-layout mode.
 
 Switch to the **Side-by-Side Preview** tab in the GUI at any point during or after analysis/translation. Select any extracted paragraph block from the table to view the original English source text side-by-side with its Bangla translation.
 
@@ -216,6 +303,38 @@ For PDF documents containing scanned pages or images with low text density, the 
 ---
 
 ## Running Automated Tests
+
+The page-six pilot can also be run outside the GUI. It saves translation results
+as JSON so exports can be regenerated without another model/API request:
+
+```powershell
+python tools/run_local_pilot.py "path/to/book.pdf" --pages 6 --int8 --output output/page6_local
+python tools/run_cloud_pilot.py output/page6_local/pilot.json output/page6_cloud
+python tools/export_pilot_docx.py output/page6_local/pilot.json
+python tools/export_pilot_docx.py output/page6_cloud/pilot.json
+python tools/export_pilot_pdf.py output/page6_local/pilot.json serif
+python tools/export_pilot_pdf.py output/page6_cloud/pilot.json serif
+```
+
+Cloud translation uses the locally configured key, API base URL, and model and
+may incur provider charges. The `--int8` option is an experimental CPU memory
+optimization for the pilot, not the default GUI local-model path. Both exports
+are Bangla only. Word export and model-powered revision are not yet GUI actions.
+See `PROJECT_STATUS.md` for verification results and known output limitations.
+
+An opt-in GUI workflow test uses the real Qt controls, translation worker,
+configured gateway, and PDF builder on physical page 6:
+
+```powershell
+python tools/test_gui_workflow.py
+```
+
+It substitutes the native file picker and uses isolated databases under
+`tmp/gui_e2e/` to protect existing jobs and book records. Its first run may incur
+gateway charges; subsequent runs reuse its saved translations. It checks preview
+updates, edit save/restore, page selection, and source/output preservation, and
+writes a report and GUI snapshots. It does not certify whole-book accuracy or
+replace testing native dialogs and desktop interactions.
 
 Run the unit test suite to verify extraction, paragraph parsing, layout analysis, font loading, Google & OpenAI translation providers, caching, job state saving, and PDF creation:
 ```bash

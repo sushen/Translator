@@ -10,6 +10,7 @@ class Settings:
     translation_provider: str = field(default_factory=lambda: os.getenv("TRANSLATION_PROVIDER", "openai"))
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+    openai_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", ""))
     groq_api_key: str = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
     groq_model: str = field(default_factory=lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
     google_project_id: str = field(default_factory=lambda: os.getenv("GOOGLE_PROJECT_ID", ""))
@@ -29,7 +30,7 @@ class Settings:
     preserve_page_numbers: bool = True
     preserve_images: bool = True
     preserve_structure: bool = True
-    keep_original_page_breaks: bool = False
+    keep_original_page_breaks: bool = True
     log_level: str = "INFO"
 
     def reload_env(self):
@@ -37,6 +38,7 @@ class Settings:
         self.translation_provider = os.getenv("TRANSLATION_PROVIDER", self.translation_provider)
         self.openai_api_key = os.getenv("OPENAI_API_KEY", self.openai_api_key)
         self.openai_model = os.getenv("OPENAI_MODEL", self.openai_model)
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", self.openai_base_url)
         self.groq_api_key = os.getenv("GROQ_API_KEY", self.groq_api_key)
         self.groq_model = os.getenv("GROQ_MODEL", self.groq_model)
         self.google_project_id = os.getenv("GOOGLE_PROJECT_ID", self.google_project_id)

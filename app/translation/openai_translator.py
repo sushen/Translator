@@ -7,15 +7,36 @@ from app.translation.prompts import SYSTEM_PROMPT, build_batch_user_prompt
 from app.translation.translation_validator import TranslationValidator
 from app.document.paragraph_model import ParagraphModel
 from app.config.settings import settings
+from app.translation.http_client import verified_http_client
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 class OpenAITranslator(BaseTranslator):
-    def __init__(self, api_key: str = None, model: str = None):
+    @staticmethod
+    def normalize_translation(value):
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+            value = value[0]
+        if not isinstance(value, str):
+            return ""
+        value = value.strip()
+        if value.startswith(("[", '"')):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, str):
+                    return parsed.strip()
+                if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], str):
+                    return parsed[0].strip()
+            except (ValueError, TypeError):
+                pass
+        return value
+
+    def __init__(self, api_key: str = None, model: str = None, base_url: str = None):
         self.api_key = api_key or settings.openai_api_key
         self.model = model or settings.openai_model
-        self.client = OpenAI(api_key=self.api_key) if self.api_key else None
+        self.base_url = settings.openai_base_url if base_url is None else base_url
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url or None,
+                             http_client=verified_http_client()) if self.api_key else None
 
     def translate_paragraph(self, text: str, is_heading: bool = False) -> str:
         if not text.strip():
@@ -35,7 +56,7 @@ class OpenAITranslator(BaseTranslator):
                     ],
                     temperature=0.3
                 )
-                res_text = response.choices[0].message.content.strip()
+                res_text = self.normalize_translation(response.choices[0].message.content)
                 valid, msg = TranslationValidator.validate(text, res_text)
                 if valid:
                     return res_text
@@ -76,7 +97,7 @@ class OpenAITranslator(BaseTranslator):
                     res_map = {item.get("id"): item.get("translated_text", "") for item in results_list if isinstance(item, dict)}
                     translated = []
                     for p in paragraphs:
-                        t_text = res_map.get(p.id, "")
+                        t_text = self.normalize_translation(res_map.get(p.id, ""))
                         valid, _ = TranslationValidator.validate(p.text, t_text)
                         if valid:
                             translated.append(t_text)

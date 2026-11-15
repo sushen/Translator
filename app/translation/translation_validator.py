@@ -20,6 +20,9 @@ class TranslationValidator:
         if not translated_text or not translated_text.strip():
             return False, "Translation result is empty"
 
+        if translated_text.startswith(("[Translation Failed:", "[Translation Error:")):
+            return False, "Translation provider reported a failure"
+
         # Check for model commentary artifacts like "Here is the translation:"
         if "Here is the translation" in translated_text or "Translation:" in translated_text:
             return False, "Contains model commentary artifact"

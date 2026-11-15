@@ -7,13 +7,13 @@ TRANSLATION RULES:
 3. Preserve dialogue structure, quotations, and punctuation.
 4. Preserve monetary values ($1.87), numbers, and character names accurately. Do not invent details.
 5. Do NOT add any translator commentary, explanations, intros, or markdown formatting (unless JSON format is requested).
-6. Output MUST strictly match the requested JSON array format containing translated texts.
+6. Output plain translated text unless JSON is explicitly requested. When JSON is requested, follow its exact structure and use strings for translated_text values.
 """
 
 def build_batch_user_prompt(items: list[dict]) -> str:
     import json
     return f"""Translate the following list of English items into natural Bangla.
-Return ONLY a valid JSON array of objects with keys "id" and "translated_text".
+Return ONLY a valid JSON object with an "items" array of objects with keys "id" and "translated_text". Each translated_text must be a plain string, not a nested JSON array.
 
 Input items:
 {json.dumps(items, ensure_ascii=False, indent=2)}

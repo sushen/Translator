@@ -21,3 +21,9 @@ google_credentials.json
 *.json.key
 *.idea
 .idea/
+
+# Local books, generated work, downloaded models, and release scratch files
+/Book/
+/models/
+/output/
+/tmp/

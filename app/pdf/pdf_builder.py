@@ -1,4 +1,6 @@
 import pymupdf
+import html
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 from app.document.document_model import DocumentModel
@@ -33,9 +35,11 @@ class PDFBuilder:
         output_path: Optional[Path] = None,
         preserve_images: bool = True,
         preserve_page_numbers: bool = True,
-        keep_page_breaks: bool = False
+        keep_page_breaks: bool = True
     ) -> Path:
         out_file = output_path or self.get_safe_output_path(document_model.file_path)
+        if keep_page_breaks:
+            return self._build_source_pages(document_model, out_file, preserve_images, preserve_page_numbers)
 
         doc = pymupdf.open()
         archive = pymupdf.Archive(str(self.font_path.parent))
@@ -183,4 +187,66 @@ class PDFBuilder:
         doc.save(str(out_file))
         doc.close()
         logger.info(f"Bangla PDF generated successfully at: {out_file}")
+        return out_file
+
+    def _build_source_pages(self, document, out_file, preserve_images, preserve_numbers):
+        from app.pdf.page_flow import append_source_page
+        self.last_page_map = []
+        with pymupdf.open() as output, tempfile.TemporaryDirectory() as folder:
+            archive = pymupdf.Archive(folder)
+            archive.add(str(self.font_path.parent))
+            css = f"""@font-face {{font-family: Bangla; src:url({self.font_path.name});}}
+                body {{font-family:Bangla; font-size:12pt; line-height:1.4; margin:0;}}
+                p {{margin:0 0 9pt 0; text-align:justify;}}
+                h1 {{margin:0 0 14pt 0; text-align:center; font-weight:bold;}}
+                img {{max-width:100%;}}"""
+            toc = []
+            for source in document.pages:
+                paragraphs = [p for p in source.paragraphs if not p.is_page_number]
+                boxes = [p.bbox for p in paragraphs if p.bbox and p.bbox[2] > p.bbox[0]]
+                left = max(24, min((b[0] for b in boxes), default=50))
+                right = min(source.width - 24, max((b[2] for b in boxes), default=source.width - 50))
+                top = max(24, min((b[1] for b in boxes), default=50))
+                if right - left < 100 or top > source.height - 100:
+                    left, right, top = 36, source.width - 36, 36
+                items = []
+                for index, paragraph in enumerate(paragraphs):
+                    text = html.escape(paragraph.current_translation or paragraph.source_text).replace("\n", "<br>")
+                    font = max(11, min(20 if paragraph.is_heading else 14, paragraph.font_size))
+                    tag = "h1" if paragraph.is_heading else "p"
+                    markup = f'<{tag} style="font-size:{font}pt">{text}</{tag}>'
+                    y = paragraph.bbox[1] if paragraph.bbox else index * 20
+                    bottom = paragraph.bbox[3] if paragraph.bbox else y + 20
+                    items.append((y, bottom, markup))
+                if preserve_images:
+                    for index, block in enumerate(source.blocks):
+                        if block.block_type == "image" and block.image_bytes:
+                            name = f"image_{source.page_num}_{index}.png"
+                            Path(folder, name).write_bytes(block.image_bytes)
+                            width = min(right - left, block.bbox[2] - block.bbox[0])
+                            height = width * (block.bbox[3] - block.bbox[1]) / max(1, block.bbox[2] - block.bbox[0])
+                            height_limit = source.height - top - 45
+                            if height > height_limit:
+                                width *= height_limit / height
+                                height = height_limit
+                            items.append((block.bbox[1], block.bbox[3], f'<p><img src="{name}" width="{width}" height="{height}"></p>'))
+                content = []
+                previous_bottom = None
+                for y, bottom, markup in sorted(items, key=lambda item:item[0]):
+                    gap = max(0, y - previous_bottom - 9) if previous_bottom is not None else 0
+                    content.append(f'<div style="margin-top:{gap}pt">{markup}</div>')
+                    previous_bottom = bottom
+                pages = append_source_page(output, "".join(content),
+                    source.width, source.height, pymupdf.Rect(left, top, right, source.height - 42), css, archive)
+                self.last_page_map.append({"source_page": source.page_num, "output_pages": [p + 1 for p in pages]})
+                toc.append([1, f"Source page {source.page_num}", pages[0] + 1])
+                if preserve_numbers:
+                    for continuation, index in enumerate(pages):
+                        label = f"Source page {source.page_num}"
+                        if continuation:
+                            label += f" - continued {continuation + 1}"
+                        output[index].insert_textbox(pymupdf.Rect(left, source.height - 30, right, source.height - 12),
+                                                     label, fontsize=8, align=1)
+            output.set_toc(toc)
+            output.save(str(out_file))
         return out_file

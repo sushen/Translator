@@ -3,7 +3,6 @@ import shutil
 import gc
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, Tuple
-import torch
 from app.utils.paths import get_models_dir
 from app.utils.logging import get_logger
 
@@ -66,6 +65,7 @@ class ModelManager:
         Resolve 'auto', 'cpu', 'cuda' into actual device string ('cuda' or 'cpu').
         Falls back to 'cpu' if 'cuda' is requested but unavailable.
         """
+        import torch
         pref = (preferred_device or "auto").lower()
         cuda_available = torch.cuda.is_available()
 
@@ -82,6 +82,7 @@ class ModelManager:
 
     def get_system_hardware_info(self) -> Dict[str, Any]:
         """Return hardware details including CPU, CUDA availability, RAM, VRAM."""
+        import torch
         cuda_avail = torch.cuda.is_available()
         info = {
             "cuda_available": cuda_avail,
@@ -181,6 +182,7 @@ class ModelManager:
     def unload_model(self):
         """Unload model and tokenizer to free RAM/VRAM."""
         if self._model is not None or self._tokenizer is not None:
+            import torch
             logger.info("Unloading local translation model and freeing RAM/VRAM...")
             self._model = None
             self._tokenizer = None

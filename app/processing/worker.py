@@ -43,14 +43,16 @@ class TranslationWorker(QThread):
         preserve_images: bool = True,
         preserve_structure: bool = True,
         use_ocr: bool = True,
-        keep_page_breaks: bool = False,
-        parent=None
+        keep_page_breaks: bool = True,
+        parent=None,
+        api_base_url: Optional[str] = None
     ):
         super().__init__(parent)
         self.input_path = input_path
         self.provider = provider.lower() if provider else "openai"
         self.model_name = model_name
         self.api_key = api_key
+        self.api_base_url = settings.openai_base_url if api_base_url is None else api_base_url
         self.google_project_id = google_project_id
         self.google_credentials_path = google_credentials_path
         self.local_device = local_device
@@ -66,6 +68,8 @@ class TranslationWorker(QThread):
         self.keep_page_breaks = keep_page_breaks
 
         self._is_cancelled = False
+        self.result_document = None
+        self.job_id = None
 
     def cancel(self):
         self._is_cancelled = True
@@ -143,27 +147,31 @@ class TranslationWorker(QThread):
                     credentials_path=self.google_credentials_path
                 )
                 cache_model_name = "google-cloud-translate"
-            elif self.provider in ("local", "local ai translator") or "nllb" in self.model_name.lower():
+            elif self.provider in ("local", "local ai translator") or ("nllb" in self.model_name.lower() and not self.api_base_url):
                 from app.translation.local_translator import LocalTranslator
                 from app.translation.model_manager import ModelManager
                 repo_name = self.model_name if "nllb" in self.model_name.lower() else settings.local_model
                 mm = ModelManager(model_repo=repo_name)
                 translator = LocalTranslator(model_manager=mm, preferred_device=self.local_device)
                 cache_model_name = f"local-{mm.model_folder_name}"
-            elif self.provider in ("groq", "groq translator") or "llama" in self.model_name.lower() or "mixtral" in self.model_name.lower():
+            elif self.provider in ("groq", "groq translator") or (not self.api_base_url and ("llama" in self.model_name.lower() or "mixtral" in self.model_name.lower())):
                 translator = GroqTranslator(api_key=self.api_key, model=self.model_name)
                 cache_model_name = f"groq-{self.model_name}"
             elif self.provider in ("mock", "mock-translator") or self.model_name == "mock-translator":
                 translator = MockTranslator()
                 cache_model_name = "mock-translator"
             else:
-                translator = OpenAITranslator(api_key=self.api_key, model=self.model_name)
+                translator = OpenAITranslator(api_key=self.api_key, model=self.model_name, base_url=self.api_base_url)
                 cache_model_name = self.model_name
+                if self.api_base_url:
+                    endpoint_hash = hashlib.sha256(self.api_base_url.rstrip('/').encode()).hexdigest()[:12]
+                    cache_model_name = f"gateway-{endpoint_hash}-{self.model_name}"
 
             cache = TranslationCache()
 
             file_hash = hashlib.sha256(f"{self.input_path.read_bytes()[:10000]}|{cache_model_name}".encode('utf-8')).hexdigest()
             job_id = f"job_{file_hash[:12]}"
+            self.job_id = job_id
             job_manager = JobManager()
 
             existing_job = job_manager.load_job(job_id)
@@ -198,7 +206,10 @@ class TranslationWorker(QThread):
 
                 for p in batch:
                     # Restore from existing unit map if human edits or past run exists
-                    if p.id in units_map:
+                    if p.id in units_map and (
+                        units_map[p.id].get("human_translation") or
+                        TranslationValidator.validate(p.text, units_map[p.id].get("translated_text") or units_map[p.id].get("ai_translation") or "")[0]
+                    ):
                         restored_p = units_map[p.id]
                         p.ai_translation = restored_p.get("ai_translation")
                         p.human_translation = restored_p.get("human_translation")
@@ -211,14 +222,14 @@ class TranslationWorker(QThread):
                         p.status = "translated"
                         translated_map[p.id] = p.current_translation
                         cached_count += 1
-                    elif p.id in translated_map:
+                    elif p.id in translated_map and TranslationValidator.validate(p.text, translated_map[p.id])[0]:
                         p.set_ai_translation(translated_map[p.id])
                         p.status = "translated"
                         units_map[p.id] = p.to_dict()
                         cached_count += 1
                     else:
                         cached_text = cache.get(p.text, model_name=cache_model_name)
-                        if cached_text:
+                        if cached_text and TranslationValidator.validate(p.text, cached_text)[0]:
                             p.set_ai_translation(cached_text)
                             p.status = "translated"
                             translated_map[p.id] = cached_text
@@ -230,6 +241,8 @@ class TranslationWorker(QThread):
                 if untranslated_batch:
                     try:
                         results = translator.translate_batch(untranslated_batch)
+                        if len(results) != len(untranslated_batch):
+                            raise RuntimeError("Provider returned fewer results than source paragraphs")
                         for p, res_text in zip(untranslated_batch, results):
                             valid, msg = TranslationValidator.validate(p.text, res_text)
                             if valid:
@@ -282,16 +295,20 @@ class TranslationWorker(QThread):
                 total_blocks=total_chunks,
                 completed_blocks=completed_chunks,
                 failed_blocks=failed_count,
-                status="COMPLETED",
+                status="COMPLETED_WITH_ERRORS" if failed_count else "COMPLETED",
                 translated_map=translated_map,
                 units_map=units_map
             )
             job_manager.save_job(job)
 
-            self.progress_updated.emit(100, 100, "Translation completed successfully!")
+            completion_message = (
+                f"Translation finished with {failed_count} failed paragraphs. Review required."
+                if failed_count else "Translation completed successfully!"
+            )
+            self.progress_updated.emit(100, 100, completion_message)
 
             report_summary = (
-                f"Translation Completed Successfully!\n\n"
+                f"{completion_message}\n\n"
                 f"Source File:            {self.input_path.name}\n"
                 f"Total Pages:            {total_pages}\n"
                 f"Total Paragraph Chunks: {total_chunks}\n"
@@ -302,6 +319,7 @@ class TranslationWorker(QThread):
                 f"Output PDF:\n{output_pdf_path}"
             )
 
+            self.result_document = doc_model
             self.job_finished.emit(str(output_pdf_path), report_summary)
 
         except Exception as e:

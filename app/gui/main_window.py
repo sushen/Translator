@@ -5,9 +5,10 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QLineEdit, QPushButton, QCheckBox, QComboBox, QProgressBar, QTabWidget,
-    QFileDialog, QMessageBox, QSpinBox, QFormLayout
+    QFileDialog, QMessageBox, QSpinBox, QFormLayout, QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtGui import QFontDatabase, QFont
 
 from app.config.settings import settings
 from app.book.book_model import BookModel, BookStatus
@@ -48,19 +49,122 @@ class ModelDownloadWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Make the bundled Unicode Bengali font available to the GUI as well as PDFs.
+        font_path = FontManager.get_instance().get_font_path("Noto Sans Bengali")
+        if font_path:
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                self.setFont(QFont(families[0], 10))
         self.setWindowTitle("English → Bangla PDF Translator & Publishing Workbench")
-        self.resize(1024, 800)
+        self.resize(1280, 860)
         self.setStyleSheet(STYLE_SHEET)
 
         self.active_book: Optional[BookModel] = None
         self.input_pdf_path: Path = None
         self.analyzed_doc = None
+        self.translation_doc = None
+        self.current_output_path = None
+        self.current_job_id = None
         self.job_manager = JobManager()
         self.worker_thread: QThread = None
         self.model_manager = ModelManager(model_repo=settings.local_model)
         self.download_worker: QThread = None
 
         self._init_ui()
+        studio_menu = self.menuBar().addMenu("Translation Studio")
+        studio_menu.addAction("Open translated-page editor", self._open_studio)
+        studio_menu.addAction("Open translated PDF in Studio…", self._open_pdf_studio)
+        studio_menu.addAction("Open saved Studio project…", self._open_saved_studio)
+        self.studio_windows = []
+        from app.gui.zoom import install_zoom
+        install_zoom(self)
+        file_menu = self.menuBar().addMenu("File")
+        file_menu.addAction("Book locations…", self._configure_book_locations)
+        self._load_default_book()
+
+    def _load_default_book(self):
+        from app.gui.book_locations import book_locations
+        defaults = book_locations()
+        if not self.input_pdf_path and defaults["source"] and Path(defaults["source"]).is_file():
+            self._select_input_pdf(defaults["source"])
+
+    def _configure_book_locations(self):
+        from app.gui.book_locations import BookLocationsDialog
+        dialog = BookLocationsDialog(self)
+        if dialog.exec():
+            self._load_default_book()
+            self.statusBar().showMessage("Book locations saved. Current work stays open; defaults apply on next launch.")
+
+    def _studio_cloud_config(self):
+        provider = self.provider_combo.currentText()
+        if provider == "OpenAI":
+            config = {"key": self.api_key_edit.text().strip(),
+                      "model": self.model_combo.currentText(),
+                      "url": self.api_base_url_edit.text().strip()}
+        elif provider == "Groq":
+            config = {"key": os.getenv("GROQ_API_KEY") or settings.groq_api_key,
+                      "model": self.groq_model_combo.currentText(),
+                      "url": "https://api.groq.com/openai/v1"}
+        else:
+            raise ValueError("Select OpenAI or Groq in Translation Job settings for AI refinement.")
+        if not config["key"]:
+            raise ValueError("Configure your cloud API key in Translation Job settings first.")
+        return config
+
+    def _open_pdf_studio(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open translated PDF in Studio", str(get_output_dir()), "PDF (*.pdf)")
+        if not path:
+            return
+        try:
+            from app.document.studio_frontmatter import import_pdf
+            from app.gui.studio_window import StudioWindow
+            project = import_pdf(path)
+            window = StudioWindow(None, self._studio_cloud_config, self, project=project)
+            window.dirty = True
+            self.studio_windows.append(window)
+            window.show()
+        except Exception as exc:
+            QMessageBox.warning(self, "Studio PDF import", str(exc))
+
+    def _open_saved_studio(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open Studio project", str(get_output_dir()), "Studio project (*.json)")
+        if not path:
+            return
+        try:
+            from app.document.studio_project import load_project
+            from app.gui.studio_window import StudioWindow
+            window = StudioWindow(None, self._studio_cloud_config, self, project=load_project(path))
+            window.project_path = path
+            self.studio_windows.append(window)
+            window.show()
+        except Exception as exc:
+            QMessageBox.warning(self, "Studio project", str(exc))
+
+    def closeEvent(self, event):
+        for window in self.studio_windows:
+            if window.worker and window.worker.isRunning():
+                QMessageBox.information(self, "AI request running", "Wait for the Studio AI request to finish before closing the application.")
+                event.ignore()
+                return
+        for window in self.studio_windows:
+            if window.isVisible() and not window.close():
+                event.ignore()
+                return
+        super().closeEvent(event)
+
+    def _open_studio(self):
+        if self.worker_thread and self.worker_thread.isRunning():
+            QMessageBox.information(self, "Translation running", "Wait for translation to finish before opening the editor.")
+            return
+        document = self.translation_doc or self.analyzed_doc
+        if not document or not document.pages:
+            QMessageBox.information(self, "Translation Studio", "Open or analyze a book first. For existing translations, open its Human Review from Books.")
+            return
+        from app.gui.studio_window import StudioWindow
+        window = StudioWindow(document, self._studio_cloud_config, self)
+        self.studio_windows.append(window)
+        window.show()
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -79,10 +183,12 @@ class MainWindow(QMainWindow):
         # Tab 2: Translation Job Tab
         main_tab = QWidget()
         main_tab_layout = QVBoxLayout(main_tab)
+        main_tab_layout.setContentsMargins(18, 14, 18, 14)
+        main_tab_layout.setSpacing(12)
 
         # Header
         header_layout = QVBoxLayout()
-        title_lbl = QLabel("<h1>Translation Job Workbench</h1>")
+        title_lbl = QLabel("<h2>Translation Job Workbench</h2>")
         subtitle_lbl = QLabel("Configure AI translation options and process English PDFs into Bangla.")
         subtitle_lbl.setStyleSheet("color: #555555; margin-bottom: 10px;")
         header_layout.addWidget(title_lbl)
@@ -92,6 +198,7 @@ class MainWindow(QMainWindow):
         # Active Book Banner
         self.active_book_lbl = QLabel("Active Book: [None Selected - Select or create a book in Books tab]")
         self.active_book_lbl.setStyleSheet("padding: 6px; background-color: #e2e8f0; font-weight: bold;")
+        self.active_book_lbl.setWordWrap(True)
         main_tab_layout.addWidget(self.active_book_lbl)
 
         # Input Section
@@ -107,9 +214,13 @@ class MainWindow(QMainWindow):
         file_picker_layout.addWidget(self.browse_btn)
 
         input_layout.addRow("Input PDF:", file_picker_layout)
+        locations_btn = QPushButton("Book locations…")
+        locations_btn.clicked.connect(self._configure_book_locations)
+        input_layout.addRow("Library defaults:", locations_btn)
 
         # Metadata labels
         self.file_info_lbl = QLabel("File: N/A | Pages: 0 | Type: N/A | Status: Not Loaded")
+        self.file_info_lbl.setWordWrap(True)
         input_layout.addRow("Display Info:", self.file_info_lbl)
 
         main_tab_layout.addWidget(input_group)
@@ -162,9 +273,14 @@ class MainWindow(QMainWindow):
         openai_layout.setContentsMargins(0, 0, 0, 0)
 
         self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
         self.model_combo.addItems(["gpt-4o-mini", "gpt-4o"])
-        self.model_combo.setCurrentText(settings.openai_model if settings.openai_model in ["gpt-4o-mini", "gpt-4o"] else "gpt-4o-mini")
+        self.model_combo.setCurrentText(settings.openai_model)
         openai_layout.addRow("Translation Model:", self.model_combo)
+
+        self.api_base_url_edit = QLineEdit(settings.openai_base_url)
+        self.api_base_url_edit.setPlaceholderText("Default OpenAI address, or your gateway URL ending in /v1")
+        openai_layout.addRow("API Base URL:", self.api_base_url_edit)
 
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
@@ -289,7 +405,8 @@ class MainWindow(QMainWindow):
 
         lang_layout.addRow("Translation Pages:", page_selection_widget)
 
-        settings_hbox.addWidget(lang_group)
+        settings_hbox.addWidget(lang_group, 3)
+        settings_hbox.setAlignment(Qt.AlignTop)
 
         # Document Options Section
         doc_opts_group = QGroupBox("DOCUMENT OPTIONS")
@@ -307,7 +424,8 @@ class MainWindow(QMainWindow):
         self.chk_structure.setChecked(settings.preserve_structure)
         self.chk_ocr = QCheckBox("Use OCR when necessary")
         self.chk_ocr.setChecked(settings.ocr_enabled)
-        self.chk_page_breaks = QCheckBox("Keep original page breaks")
+        self.chk_page_breaks = QCheckBox("Keep source pages; add overflow pages")
+        self.chk_page_breaks.setToolTip("Preserve source size and readable text. Extra continuation pages stay with their source page. Uncheck for continuous reflow.")
         self.chk_page_breaks.setChecked(settings.keep_original_page_breaks)
 
         doc_opts_layout.addWidget(self.chk_headings)
@@ -317,8 +435,9 @@ class MainWindow(QMainWindow):
         doc_opts_layout.addWidget(self.chk_structure)
         doc_opts_layout.addWidget(self.chk_ocr)
         doc_opts_layout.addWidget(self.chk_page_breaks)
+        doc_opts_layout.addStretch()
 
-        settings_hbox.addWidget(doc_opts_group)
+        settings_hbox.addWidget(doc_opts_group, 2)
         main_tab_layout.addLayout(settings_hbox)
 
         # Action Buttons
@@ -361,8 +480,17 @@ class MainWindow(QMainWindow):
         progress_layout.addWidget(self.stats_lbl)
 
         main_tab_layout.addWidget(progress_group)
+        main_tab_layout.addStretch()
 
-        self.tabs.addTab(main_tab, "Translation Job")
+        for form in main_tab.findChildren(QFormLayout):
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            form.setVerticalSpacing(9)
+        job_scroll = QScrollArea()
+        job_scroll.setWidgetResizable(True)
+        job_scroll.setWidget(main_tab)
+
+        self.tabs.addTab(job_scroll, "Translation Job")
 
         # Tab 3: Side-by-Side Review Workbench
         self.preview_widget = SideBySidePreviewWidget()
@@ -376,8 +504,10 @@ class MainWindow(QMainWindow):
         if not self.input_pdf_path or not self.analyzed_doc:
             return
 
-        job = self.job_manager.find_job_by_path(str(self.input_pdf_path))
-        all_paras = self.analyzed_doc.get_all_paragraphs()
+        job = (self.job_manager.load_job(self.current_job_id) if self.current_job_id
+               else self.job_manager.find_job_by_path(str(self.input_pdf_path)))
+        document = self.translation_doc or self.analyzed_doc
+        all_paras = document.get_all_paragraphs()
 
         if job:
             for p in all_paras:
@@ -388,15 +518,15 @@ class MainWindow(QMainWindow):
         # Rebuild output PDF with current human edits
         try:
             builder = PDFBuilder(font_name=self.font_combo.currentText())
-            stem = self.input_pdf_path.stem
-            out_file = get_output_dir() / f"{stem}_Bangla.pdf"
+            out_file = self.current_output_path or builder.get_safe_output_path(self.input_pdf_path)
             builder.build_pdf(
-                self.analyzed_doc,
+                document,
                 output_path=out_file,
                 preserve_images=self.chk_images.isChecked(),
                 preserve_page_numbers=self.chk_page_nums.isChecked(),
                 keep_page_breaks=self.chk_page_breaks.isChecked()
             )
+            self.current_output_path = out_file
             logger.info(f"Rebuilt output PDF with human edits at: {out_file}")
         except Exception as e:
             logger.error(f"Failed rebuilding PDF with human edits: {e}")
@@ -405,6 +535,12 @@ class MainWindow(QMainWindow):
         self.active_book = book
         self.active_book_lbl.setText(f"Active Book: {book.title} (Author: {book.author} | Translator: {book.translator or 'Unassigned'})")
         if book.source_pdf_path and Path(book.source_pdf_path).exists():
+            if self.input_pdf_path != Path(book.source_pdf_path):
+                self.translation_doc = None
+                self.current_output_path = None
+                self.current_job_id = None
+                self.analyzed_doc = None
+                self.translate_btn.setEnabled(False)
             self.input_pdf_path = Path(book.source_pdf_path)
             self.file_path_edit.setText(str(self.input_pdf_path))
             self.file_info_lbl.setText(f"File: {self.input_pdf_path.name} | Status: Selected from Book Record")
@@ -420,9 +556,11 @@ class MainWindow(QMainWindow):
                 self.file_path_edit.setText(str(self.input_pdf_path))
                 self._on_analyze_pdf()
 
-        # Restore saved job state and units map into analyzed doc
-        job = self.job_manager.find_job_by_path(str(self.input_pdf_path))
-        all_paras = self.analyzed_doc.get_all_paragraphs() if self.analyzed_doc else []
+        # Keep review and subsequent edits on the same translated document/job.
+        job = (self.job_manager.load_job(self.current_job_id) if self.current_job_id
+               else self.job_manager.find_job_by_path(str(self.input_pdf_path)))
+        document = self.translation_doc or self.analyzed_doc
+        all_paras = document.get_all_paragraphs() if document else []
 
         if job and job.units_map:
             for p in all_paras:
@@ -557,13 +695,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Google Connection Failed", msg)
 
     def _on_browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Input English PDF", "", "PDF Files (*.pdf)")
+        from app.gui.book_locations import book_locations
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Input English PDF", book_locations()["folder"], "PDF Files (*.pdf)")
         if file_path:
-            self.input_pdf_path = Path(file_path)
-            self.file_path_edit.setText(str(self.input_pdf_path))
-            self.file_info_lbl.setText(f"File: {self.input_pdf_path.name} | Status: Selected (Pending Analysis)")
-            self.analyze_btn.setEnabled(True)
-            self.translate_btn.setEnabled(False)
+            self._select_input_pdf(file_path)
+
+    def _select_input_pdf(self, file_path):
+        self.translation_doc = None
+        self.current_output_path = None
+        self.current_job_id = None
+        self.analyzed_doc = None
+        self.input_pdf_path = Path(file_path)
+        self.file_path_edit.setText(str(self.input_pdf_path))
+        self.file_info_lbl.setText(f"File: {self.input_pdf_path.name} | Status: Selected (Pending Analysis)")
+        self.analyze_btn.setEnabled(True)
+        self.translate_btn.setEnabled(False)
 
     def _on_analyze_pdf(self):
         if not self.input_pdf_path or not self.input_pdf_path.exists():
@@ -575,6 +721,9 @@ class MainWindow(QMainWindow):
         from app.pdf.page_parser import PageParser
 
         try:
+            self.translation_doc = None
+            self.current_output_path = None
+            self.current_job_id = None
             self.status_lbl.setText("Analyzing PDF...")
             analyzer = PDFAnalyzer()
             res = analyzer.analyze(self.input_pdf_path)
@@ -693,6 +842,7 @@ class MainWindow(QMainWindow):
             provider=provider,
             model_name=model_name,
             api_key=api_key,
+            api_base_url=self.api_base_url_edit.text().strip(),
             google_project_id=google_proj,
             google_credentials_path=google_cred,
             local_device=self.local_device_combo.currentText(),
@@ -738,8 +888,12 @@ class MainWindow(QMainWindow):
             self.book_widget.book_manager.save_book(self.active_book)
             self.book_widget.refresh_book_list()
 
-        # Update preview with translated text
-        all_paras = self.analyzed_doc.get_all_paragraphs()
+        # The worker extracts a separate document: review the actual translated result.
+        self.translation_doc = self.worker.result_document
+        self.current_output_path = Path(out_path)
+        self.current_job_id = self.worker.job_id
+        document = self.translation_doc or self.analyzed_doc
+        all_paras = document.get_all_paragraphs()
         self.preview_widget.load_paragraphs(all_paras)
 
         dialog = ReportDialog(report, self)

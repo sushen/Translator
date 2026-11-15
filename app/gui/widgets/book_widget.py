@@ -4,7 +4,7 @@ from typing import Optional, List, Callable
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QFileDialog, QDialog, QFormLayout, QSplitter, QProgressBar, QTextEdit
+    QFileDialog, QDialog, QFormLayout, QSplitter, QProgressBar, QTextEdit, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -116,6 +116,8 @@ class BookWidget(QWidget):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Title", "Author", "Translator", "Cover", "Overall Status"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in range(1, 5):
+            self.table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
@@ -132,6 +134,7 @@ class BookWidget(QWidget):
 
         self.details_group = QGroupBox("BOOK DETAILS & WORKFLOW")
         details_form = QFormLayout(self.details_group)
+        details_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
 
         self.lbl_title = QLabel("-")
         self.lbl_author = QLabel("-")
@@ -186,13 +189,23 @@ class BookWidget(QWidget):
         self.cover_preview_lbl = QLabel("No cover generated yet.")
         self.cover_preview_lbl.setAlignment(Qt.AlignCenter)
         self.cover_preview_lbl.setStyleSheet("background-color: #2b2b2b; color: #aaaaaa; border: 1px dashed #666;")
-        self.cover_preview_lbl.setFixedHeight(220)
+        self.cover_preview_lbl.setMinimumHeight(150)
+        self.cover_preview_lbl.setMaximumHeight(220)
         cover_layout.addWidget(self.cover_preview_lbl)
 
         right_layout.addWidget(cover_group)
 
-        splitter.addWidget(right_widget)
-        splitter.setSizes([550, 400])
+        right_layout.addStretch()
+        for label in (self.lbl_title, self.lbl_author, self.lbl_translator, self.lbl_source_pdf):
+            label.setWordWrap(True)
+        dashboard_scroll = QScrollArea()
+        dashboard_scroll.setWidgetResizable(True)
+        dashboard_scroll.setWidget(right_widget)
+        splitter.addWidget(dashboard_scroll)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([720, 460])
 
         main_layout.addWidget(splitter)
 

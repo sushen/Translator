@@ -42,6 +42,37 @@ class TestModelManager(unittest.TestCase):
         self.assertIn("device_name", info)
 
 class TestLocalTranslator(unittest.TestCase):
+    def test_output_at_limit_is_rejected_even_with_forced_eos(self):
+        import torch
+        tokenizer, model = MagicMock(), MagicMock()
+        tokenizer.encode.return_value = [1, 2]
+        tokenizer.return_value = {"input_ids": torch.tensor([[3, 4]])}
+        tokenizer.batch_decode.return_value = ["বাংলা"]
+        model.generation_config.eos_token_id = 2
+        model.generation_config.pad_token_id = 1
+        model.generate.return_value = torch.tensor([[2, 5, 6, 7, 2]])
+        manager = MagicMock()
+        manager.load_model.return_value = tokenizer, model, "cpu"
+        result = LocalTranslator(model_manager=manager, max_length=4).translate_paragraph("Test")
+        self.assertTrue(result.startswith("[Translation Failed:"))
+
+    def test_long_source_chunks_preserve_every_character(self):
+        class CharacterTokenizer:
+            def encode(self, text, add_special_tokens=True):
+                return list(text) + [0, 1]
+
+        translator = LocalTranslator(max_length=35)
+        source = "A long philosophical sentence. Another sentence with terminology! " * 8
+        chunks = translator._split_text(source, CharacterTokenizer())
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(chunks), source)
+        self.assertTrue(all(len(CharacterTokenizer().encode(c)) <= 35 for c in chunks))
+
+    def test_failure_marker_with_bengali_is_rejected(self):
+        from app.translation.translation_validator import TranslationValidator
+        valid, _ = TranslationValidator.validate("Difference", "[Translation Failed: পার্থক্য]")
+        self.assertFalse(valid)
+
     def setUp(self):
         self.temp_dir = TemporaryDirectory()
         self.models_dir = Path(self.temp_dir.name)

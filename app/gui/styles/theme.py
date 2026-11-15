@@ -26,10 +26,10 @@ QPushButton {
     background-color: #2b579a;
     color: white;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: 4px;
     font-weight: bold;
-    min-width: 100px;
+    min-width: 0px;
 }
 
 QPushButton:hover {
@@ -73,4 +73,28 @@ QHeaderView::section {
     font-weight: bold;
     border: 1px solid #dcdfe6;
 }
+"""
+
+# Shared control sizing keeps enlarged text proportional without oversized buttons.
+STYLE_SHEET += """
+QWidget { color: #253247; }
+QToolBar { background: #ffffff; border-bottom: 1px solid #dde3eb; spacing: 4px; padding: 4px; }
+QToolButton { padding: 5px 9px; border-radius: 4px; }
+QToolButton:hover { background: #e8eff9; }
+QLineEdit, QComboBox, QSpinBox {
+    background: #ffffff; border: 1px solid #ccd5e2;
+    border-radius: 4px; padding: 4px 7px; min-height: 20px;
+}
+QTextEdit, QPlainTextEdit {
+    background: #ffffff; border: 1px solid #d4dce7;
+    border-radius: 5px; padding: 8px; selection-background-color: #c9dcfa;
+}
+QTabWidget::pane { border: 1px solid #dde3eb; background: #f5f6f8; }
+QTabBar::tab { padding: 8px 16px; background: #e9edf3; margin-right: 3px; }
+QTabBar::tab:selected { background: #ffffff; color: #234f8f; }
+QSplitter::handle { background: #e6ebf2; }
+QScrollArea { border: none; background: transparent; }
+QLabel#panelHeading { color: #234f8f; font-weight: bold; padding: 3px 0px; }
+QPushButton { color: #ffffff; }
+QPushButton:disabled { color: #677489; background-color: #e0e5ed; }
 """
