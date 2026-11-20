@@ -19,6 +19,8 @@ def main():
 
     window = MainWindow()
     window.show()
+    if "--trilingual" in sys.argv:
+        window._open_trilingual()
 
     sys.exit(app.exec())
 

@@ -188,8 +188,8 @@ to set the default book folder, English/reference PDF, and original-edition PDF.
 The app initially discovers a single PDF in `Book` and its existing original
 subfolder. Defaults are remembered; startup selects the reference PDF without
 automatically analyzing or translating it. Changing defaults keeps current work
-open. The original-edition path is saved for reference; automatic multilingual
-alignment and original-edition refinement are not implemented yet.
+open. The Trilingual Book workspace uses these source defaults and offers
+explicit passage alignment; normal English-to-Bangla jobs do not align editions.
 
 On Windows, double-click **Start GUI.bat** in the project folder. It uses the
 project's `venv` and keeps startup errors visible if launching fails.
@@ -217,6 +217,68 @@ Shortcuts: **Ctrl++** (or **Ctrl+=**) to enlarge, **Ctrl+-** to reduce, and
 ---
 
 ## Side-by-Side Preview
+
+### French / English / Bangla book workspace
+
+Double-click **Start Trilingual Book.bat**, or choose **Trilingual Book → Open
+French / English / Bangla workspace…** in the normal application. The older
+English-to-Bangla job and Studio remain separate.
+
+1. Choose **Open Introduction pilot** to load the completed local pilot without
+   any paid call. **Open project / pilot** also opens saved projects and recovery
+   copies. The first Save of an imported pilot requires a new project filename.
+2. Select a unit in **Aligned reading & editing**. Read its French passage(s),
+   English reference, and editable Bangla. Use the French passage selector and
+   physical-page field for multiple evidence passages. View either source PDF
+   inside the app. Correct text, add/remove passages, split/join English units,
+   add a missing English paragraph, record differences, or mark a unit excluded.
+   Source corrections flag the alignment for review. **Restore revision** retains
+   and restores previous text; excluded or joined content is not discarded.
+3. **Sources, batches & OCR** selects both PDFs and independent physical-page
+   ranges. **Next English batch** advances the English range only; set the French
+   evidence window yourself rather than assuming matching pagination. An optional
+   start heading excludes preceding material in the initial batch. **Prepare /
+   resume selected batch** runs locally, retaining existing units and OCR edits.
+   Inspect empty/problem pages through **Page extraction report**. Correct French
+   OCR and assign selected passages using **Edit prepared source / OCR text**.
+   **Apply moved source paths** accepts byte-identical relocated source PDFs.
+4. Select one or more rows (Ctrl/Shift for multiple). **Align selected** requests
+   French evidence from the prepared French range. **Translate empty selected**
+   preserves existing Bangla; **Retranslate selected** proposes replacements.
+   **Improve current Bangla** sends matched French, English, current Bangla and
+   optional editorial instructions. These actions use the OpenAI/Groq settings
+   from Translation Job and may incur charges. **Offline mock** is explicitly
+   test text, not a real translation or semantic alignment.
+5. Review proposals separately, then **Accept current proposal**, **Accept
+   selected proposals**, or **Reject proposal**. Source/Bangla edits invalidate
+   pending proposals. Exact French-text checks verify evidence membership, not
+   semantic fidelity. Uncertain/missing counterparts and edition differences
+   remain visible. Manually review and mark alignment decisions as appropriate.
+6. **Save / Save as** stores the editable project. Recovery copies are also saved
+   under `output/trilingual/` after edits and each worker step. Reopen a recovery
+   JSON to resume after interruption. **Stop after current step** retains finished
+   work; an active cloud request can take up to two minutes to return.
+7. **Preview trilingual PDF** shows actual rendered output inside the app.
+   **Export PDF + HTML** writes both reading formats, and **Export HTML** creates
+   an independent, self-contained reading copy with its Bengali font embedded.
+   Both use accepted/manual text in French → English → Bangla unit order, allow
+   readable continuation pages, retain English PDF references, and include notes.
+   Exports require new filenames and never overwrite existing output silently.
+
+French OCR needs Tesseract and `fra.traineddata` in the selected language-data
+folder. No automatic download is started. The prepared pilot installation uses
+`models/ocr/` for the small French OCR data file. Source PDFs remain external;
+keep them available or relink identical moved copies. Cloud alignment/revision
+uses OpenAI/Groq; Google/local providers remain in the older translation job.
+Whole-book semantic alignment and publication quality require editorial review.
+
+**Continuing after the Introduction pilot:** open your saved project, select
+**Sources, batches & OCR → Next English batch** (the initial pilot advances to
+English PDF pages 38–47), choose the French evidence range, then select
+**Prepare / resume selected batch**. Return to **Aligned reading & editing**,
+select the new rows, request alignment/translation, review and accept proposals,
+then save and preview/export. This sequence is the existing continuation path;
+the application currently has no one-click whole-book continuation command.
 
 ### Translation Studio page editor
 

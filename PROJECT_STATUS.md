@@ -1,6 +1,6 @@
 # Project status and development handoff
 
-Last updated: 2026-11-15 (Asia/Dhaka)
+Last updated: 2026-11-20 (Asia/Dhaka)
 
 ## Purpose
 
@@ -9,6 +9,28 @@ reviewing translations, and preparing books with covers and published PDFs.
 The original README documents installation and the PDF translation workflow.
 
 ## Current snapshot
+
+- The **Trilingual Book** desktop workspace is installed in the saved application.
+  Launch **Start Trilingual Book.bat**, or use the normal application's
+  **Trilingual Book → Open French / English / Bangla workspace…** menu.
+  It imports the completed pilot offline, stores independent editable projects,
+  and exports current French → English → Bangla text to readable PDF and HTML.
+  OpenAI/Groq alignment, translation and Bangla improvement are explicit proposals;
+  accepted text/history and manual edits are preserved. The older job/Studio
+  workflows remain separate. This is batch-based, not one-click whole-book work.
+  Continuation controls are in **Sources, batches & OCR**: choose **Next English
+  batch**, adjust the French evidence window, then **Prepare / resume selected
+  batch**; select reading units to align/translate and review the proposals.
+
+- Completed the authorized first trilingual Introduction pilot in isolated local
+  output: English physical PDF pages 28–37, excluding the preface text on page 28.
+  Eighteen aligned reading units flow French → English → Bangla, with English
+  physical-page references. The PDF has 20 reading pages plus two alignment-note
+  pages; self-contained HTML and resumable JSON are also available under
+  `output/trilingual_intro_20261120/`. This is a machine draft,
+  not an independently reviewed scholarly translation. Front matter is deferred.
+  The original CLI helper is `tools/trilingual_pilot.py`; the desktop workspace
+  imports its local pilot without rerunning translation.
 
 - Published GitHub source release `v-0.0.2` packages the current Studio/PDF improvements
   as source, with setup and limitations in `RELEASE_NOTES.md`. Local books,
@@ -165,6 +187,100 @@ with reviewed batches and a terminology policy rather than calling the whole
 application or a full-book translation perfect on the basis of this sample.
 
 ## Development log
+
+### 2026-11-20 — Integrate and prepare the Trilingual Book desktop workflow
+
+- Investigated the main window, book locations/manager, review/Studio models,
+  provider configuration, workers, pilot checkpoints and PDF flow boundaries.
+  Added an independent project model, background worker and desktop workspace;
+  integrated the menu, optional startup argument and dedicated Windows launcher.
+  Applied the scoped implementation to the saved application after verifying
+  its clean starting tree and matching source revision. Preserved original
+  source files in an ignored installation backup; checked subsequent copies
+  against installation hashes to avoid replacing concurrent user changes.
+- UI controls cover independent English/French physical-page ranges, optional
+  initial heading boundary, local extraction/OCR, resumable/next batches,
+  inspection and correction of French OCR, manual passage assignment, source PDF
+  viewing, paragraph add/split/join, exclusions, editable Bangla and alignment
+  decisions. Byte-identical moved PDFs can be relinked. Existing prepared pages,
+  corrections and valid pending proposals are reused on resume.
+- Cloud alignment selects French evidence rather than assuming equal pagination
+  or paragraph boundaries. Unverified/uncertain/missing matches stay visible.
+  Translation/retranslation and improvement use English plus matched French;
+  improvement also uses current Bangla and editorial instructions. Proposals
+  require acceptance/rejection, retain revision history, and become invalid after
+  text changes. No credentials are stored in project files. Offline mock output
+  is clearly identified and is not semantic alignment or a real translation.
+- Save/reopen and atomic recovery copies retain completed work and proposals.
+  Long OCR/network/export work uses a QThread. Stop keeps finished steps; an
+  active cloud request can take up to two minutes to return. Actual PDF preview
+  and PDF+HTML/independent HTML export use accepted/manual text in French →
+  English → Bangla order, preserve source references, allow readable continuation
+  pages and refuse existing export filenames. HTML embeds its Bengali font and
+  escapes edited text. PDF end markers guard against omitted trailing content.
+- Validation: 31 targeted tests passed in the saved application environment,
+  including 14 new project/worker/Qt-control tests, existing page flow, Studio,
+  frontmatter, gateway, lazy-provider and worker-failure checks. The latest
+  layout/settings changes also passed the focused tests in the worktree.
+  Actual source preparation/OCR was checked locally for the Introduction opening
+  and its French correspondence, excluding the preceding preface correctly.
+  Saved-copy offscreen GUI controls opened all 18 pilot units, saved/reopened a
+  native project, and exported 22 PDF pages plus HTML. Verified all reading and
+  note identifiers, unchanged pilot JSON and unchanged legacy databases in that
+  isolated run. Reviewed workspace screenshots at 100%/125% and exported PDF
+  opening/end renders. Python compilation and whitespace checks passed.
+- No paid test requests, large downloads, manual desktop end-to-end test or
+  independent linguistic review. The small French OCR language-data file is local
+  under ignored `models/ocr/`; source PDFs, outputs, OCR evidence, models, caches,
+  databases, credentials and scratch/backup reports remain outside version
+  control. No commit of runtime/private document content is intended.
+- Limitations: continuation is currently batch-based and requires choosing a
+  French evidence window; the controls are on the Sources tab, not a one-click
+  whole-book action. Paragraph reconstruction is heuristic and supports manual
+  correction. Evidence membership checks do not establish semantic fidelity.
+  Cloud alignment/revision uses OpenAI/Groq, while Google/local remain in the
+  older job. PDF Bengali copy/search retains the previously documented limitation;
+  HTML/JSON preserve Unicode. Next step: review subsequent batches and their
+  uncertain alignments using the existing desktop controls.
+
+### 2026-11-20 — Produce the French–English–Bangla Introduction pilot
+
+- Inspected the clean worktree, extraction/parser/provider/flow code, and both
+  original PDFs at their absolute paths. Verified 528 English and 413 French
+  physical pages. Located the Introduction within English physical page 28 and
+  at French page 11 (printed 7). The user accepted ten English source pages from
+  that opening, excluding title/contents/prefaces, and authorized this pilot's
+  translation. No broader translation authorization is assumed.
+- Added an isolated prepare/translate/render helper. French embedded extraction
+  loses accents; local Tesseract OCR with a 1.1 MB French language-data file
+  recovered readable accents. Retained source images/raw extraction/OCR, exact
+  English block references, gateway responses, checkpoints, and usage locally.
+  No large model downloads, paid diagnostic calls, cache writes, or book/job/
+  review-state changes. Four authorized translation/alignment requests completed.
+- Joined page continuations and extractor-created word fragments, preserving
+  meaningful hyphens. Restored an English paragraph boundary obscured by a
+  footnote marker without retranslating or dropping text. French passages remain
+  copied from OCR, including its residual errors; display dehyphenates line wraps.
+  Edition differences and substantive discrepancies are recorded in local notes.
+  The French scan's imprint identifies a 2011 reprint of the 1968 work.
+- Delivered `pilot.pdf` (22 output pages), `pilot.html`, `pilot.json`, and
+  `validation.json` in the isolated output directory above. Rendering uses the
+  existing page-flow helper and embedded Bengali font. Separated the notes
+  appendix after an integrity check caught omitted trailing notes in an earlier
+  render; all reading and note identifiers are present in the final PDF.
+- Validation: 12 artifact integrity checks passed, including complete English
+  block coverage once/in order, exact selected-page set, nonempty validated
+  Bangla, verbatim French OCR evidence, monotonic/nonoverlapping French spans,
+  unchanged source-PDF SHA-256 hashes, and all PDF reading/note identifiers.
+  Four focused line-joining checks, Python compilation and `git diff --check`
+  passed. Visually inspected an initial all-page contact sheet and final opening,
+  middle, end-of-body and appendix renders. No manual desktop GUI/end-to-end run
+  or independent linguistic review was performed. PDF Bangla copy/search remains
+  subject to the previously documented extraction limitation; HTML/JSON retain
+  original Unicode text.
+- Next concrete step: editorial review of the 18 aligned units and recorded
+  edition/OCR discrepancies before any further batch. Do not treat source/OCR
+  membership checks or provider-generated alignment notes as proof of fidelity.
 
 ### 2026-11-15 — Publish GitHub source release v-0.0.2
 

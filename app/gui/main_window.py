@@ -77,11 +77,19 @@ class MainWindow(QMainWindow):
         studio_menu.addAction("Open translated PDF in Studio…", self._open_pdf_studio)
         studio_menu.addAction("Open saved Studio project…", self._open_saved_studio)
         self.studio_windows = []
+        trilingual_menu = self.menuBar().addMenu("Trilingual Book")
+        trilingual_menu.addAction("Open French / English / Bangla workspace…", self._open_trilingual)
         from app.gui.zoom import install_zoom
         install_zoom(self)
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction("Book locations…", self._configure_book_locations)
         self._load_default_book()
+
+    def _open_trilingual(self):
+        from app.gui.trilingual_window import TrilingualWindow
+        window = TrilingualWindow(self._studio_cloud_config, self)
+        self.studio_windows.append(window)
+        window.show()
 
     def _load_default_book(self):
         from app.gui.book_locations import book_locations
